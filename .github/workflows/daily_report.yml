@@ -1,17 +1,15 @@
-name: Futures Auto Trader Cloud
+name: Strategy Report Deployment
 
 on:
   schedule:
-    - cron: '2 2 * * *'    # 10:02 TPE 進場
-    - cron: '*/15 3-5 * * *' # 11:00-13:30 監控
-    - cron: '40 5 * * *'   # 13:40 TPE 平倉
-    - cron: '37 14 * * *'  # 22:37 TPE 進場
-    - cron: '*/15 15-20 * * *' # 23:00-04:30 監控
-    - cron: '50 20 * * *'  # 04:50 TPE 平倉
+    - cron: '2 2 * * *'    # 台灣 10:02
+    - cron: '40 5 * * *'   # 台灣 13:40
+    - cron: '37 14 * * *'  # 台灣 22:37
+    - cron: '50 20 * * *'  # 台灣 04:50
   workflow_dispatch:
 
 jobs:
-  trading:
+  report_job:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v3
@@ -19,22 +17,11 @@ jobs:
         with:
           python-version: '3.10'
       - name: Install
-        run: pip install shioaji pandas requests supabase python-dotenv pytz
-      - name: Execute
+        run: pip install shioaji pandas requests python-dotenv pytz
+      - name: Run
         env:
           SHIOAJI_API_KEY: ${{ secrets.SHIOAJI_API_KEY }}
           SHIOAJI_SECRET_KEY: ${{ secrets.SHIOAJI_SECRET_KEY }}
           LINE_ACCESS_TOKEN: ${{ secrets.LINE_ACCESS_TOKEN }}
           LINE_USER_ID: ${{ secrets.LINE_USER_ID }}
-          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
-          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
-        run: |
-          H=$(TZ='Asia/Taipei' date +%H)
-          M=$(TZ='Asia/Taipei' date +%M)
-          if [ "$H" -eq 10 ] && [ "$M" -le 10 ]; then MODE="entry"
-          elif [ "$H" -eq 22 ] && [ "$M" -le 45 ]; then MODE="entry"
-          elif [ "$H" -eq 13 ] && [ "$M" -ge 35 ]; then MODE="exit"
-          elif [ "$H" -eq 4 ] && [ "$M" -ge 45 ]; then MODE="exit"
-          else MODE="monitor"
-          fi
-          python main.py $MODE
+        run: python main.py
