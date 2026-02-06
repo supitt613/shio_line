@@ -1,0 +1,37 @@
+name: Futures Strategy Daily Report
+
+on:
+  schedule:
+    # GitHub Actions 使用 UTC 時間，台灣時間 (UTC+8) 需減去 8 小時
+    # 08:30 TPE = 00:30 UTC
+    # 14:30 TPE = 06:30 UTC
+    # 23:00 TPE = 15:00 UTC
+    - cron: '30 0 * * *'
+    - cron: '30 6 * * *'
+    - cron: '0 15 * * *'
+  workflow_dispatch: # 允許手動點擊按鈕執行
+
+jobs:
+  run_bot:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install shioaji pandas pytz requests python-dotenv
+
+      - name: Execute Monitor Script
+        env:
+          SHIOAJI_API_KEY: ${{ secrets.SHIOAJI_API_KEY }}
+          SHIOAJI_SECRET_KEY: ${{ secrets.SHIOAJI_SECRET_KEY }}
+          LINE_ACCESS_TOKEN: ${{ secrets.LINE_ACCESS_TOKEN }}
+          LINE_USER_ID: ${{ secrets.LINE_USER_ID }}
+        run: python main.py --once  # 增加一個 --once 參數讓程式跑完就結束
