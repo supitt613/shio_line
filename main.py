@@ -95,14 +95,28 @@ class CloudTrader:
         return res.data[0] if res.data else None
 
     def place_order(self, action, price, remark, is_closing=False):
+        """執行下單指令並同步 Supabase (修正市價單參數)"""
+        # 建立期貨市價委託物件
         order = self.api.Order(
-            action=action, price=0, quantity=1,
-            order_type=sj.constant.OrderType.Market,
-            price_type=sj.constant.OrderType.Market,
-            oct=sj.constant.FuturesOCT.Auto, code=self.code
+            action=action,                    # "Buy" 或 "Sell"
+            price=0,                          # 市價單價格填 0
+            quantity=1,                       # 下單口數
+            order_type=sj.constant.OrderType.ROD,           # 期貨通常用 ROD
+            price_type=sj.constant.FuturesPriceType.Market, # 修正：使用 FuturesPriceType.Market
+            oct=sj.constant.FuturesOCT.Auto,                # 自動開平倉
+            code=self.code
         )
-        self.api.place_order(self.contract, order)
         
+        # 送出委託
+        try:
+            trade = self.api.place_order(self.contract, order)
+            print(f"📡 {self.code} 委託送出: {action} 市價")
+        except Exception as e:
+            print(f"❌ {self.code} 下單失敗: {e}")
+            send_line_msg(f"⚠️ 【下單失敗通知】\n合約: {self.code}\n錯誤: {e}")
+            return
+
+        # 資料庫與 LINE 同步
         if supabase:
             if is_closing:
                 pos = self.get_active_position()
@@ -113,7 +127,7 @@ class CloudTrader:
                     "status": "open", "remark": remark
                 }).execute()
         
-        send_line_msg(f"✅ 【交易執行：{self.code}】\n動作: {action}\n價格: {price}\n原因: {remark}")
+        send_line_msg(f"✅ 【交易執行：{self.code}】\n動作: {action}\n參考成交價: {price}\n原因: {remark}")
 
     def execute_logic(self, cmd):
         session, base_time, gap, stop_loss = self.get_config()
