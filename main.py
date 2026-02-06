@@ -46,17 +46,42 @@ class CloudTrader:
         else: # 夜盤
             return "NIGHT", "13:45:00", 61, 68
 
-    def fetch_base_ma(self, target_time_str):
-        query_date = date.today().strftime("%Y-%m-%d")
-        ticks = self.api.ticks(self.contract, query_date)
-        df = pd.DataFrame({**ticks})
-        if df.empty: return None
-        df.ts = pd.to_datetime(df.ts).dt.tz_localize(TZ) if df.ts.dt.tz is None else df.ts.dt.tz_convert(TZ)
-        df = df.set_index('ts', drop=True)
-        ohlc_5m = df['close'].resample('5min', label='right', closed='right').last().ffill().to_frame()
-        ohlc_5m['21MA'] = ohlc_5m['close'].rolling(window=21).mean()
-        target_rows = ohlc_5m[ohlc_5m.index.strftime('%H:%M:%S') == target_time_str]
-        return round(target_rows['21MA'].iloc[-1], 2) if not target_rows.empty else None
+     def fetch_base_ma(self, target_time_str):
+        """利用 Ticks 補值邏輯精算基準線 (修正版)"""
+        try:
+            query_date = date.today().strftime("%Y-%m-%d")
+            ticks = self.api.ticks(self.contract, query_date)
+            df = pd.DataFrame({**ticks})
+            if df.empty: return None
+
+            # 修正點 1: 確保 ts 轉換為 Datetime 格式，並處理異常值
+            df['ts'] = pd.to_datetime(df['ts'], errors='coerce')
+            df = df.dropna(subset=['ts']) # 移除無法轉換的時間列
+
+            # 修正點 2: 使用更安全的方式處理時區
+            if df['ts'].dt.tz is None:
+                df['ts'] = df['ts'].dt.tz_localize('UTC').dt.tz_convert(TZ)
+            else:
+                df['ts'] = df['ts'].dt.tz_convert(TZ)
+
+            # 設定索引
+            df = df.set_index('ts', drop=True)
+
+            # 3. 5分鐘K線轉換與補值
+            # 確保欄位名稱正確 (Shioaji Ticks 有時是大寫 'Close' 有時是小寫 'close')
+            price_col = 'close' if 'close' in df.columns else 'price'
+            ohlc_5m = df[price_col].resample('5min', label='right', closed='right').last().ffill().to_frame()
+            ohlc_5m['21MA'] = ohlc_5m[price_col].rolling(window=21).mean()
+
+            # 4. 鎖定時間點
+            target_rows = ohlc_5m[ohlc_5m.index.strftime('%H:%M:%S') == target_time_str]
+            if not target_rows.empty:
+                val = target_rows['21MA'].iloc[-1]
+                return round(val, 2) if pd.notnull(val) else None
+            return None
+        except Exception as e:
+            print(f"[{self.code}] 基準線計算異常: {e}")
+            return None
 
     def get_active_position(self):
         """從 Supabase 取得尚未平倉的部位"""
