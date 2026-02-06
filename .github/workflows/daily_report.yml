@@ -1,32 +1,32 @@
-name: Futures Auto Trader
+name: Futures Auto Trader Cloud
 
 on:
   schedule:
     # 台灣 10:02 進場 (UTC 02:02)
     - cron: '2 2 * * *'
-    # 台灣 11:00 - 13:30 監控止損 (每 15 分鐘啟動一次檢查)
+    # 台灣 11:00-13:30 監控止損 (每 15 分鐘一次)
     - cron: '*/15 3-5 * * *'
     # 台灣 13:40 日盤平倉 (UTC 05:40)
     - cron: '40 5 * * *'
     # 台灣 22:37 夜盤進場 (UTC 14:37)
     - cron: '37 14 * * *'
-    # 台灣 23:00 - 04:30 監控止損 (UTC 15:00 - 20:30)
+    # 台灣 23:00-04:30 監控止損 (每 15 分鐘一次)
     - cron: '*/15 15-20 * * *'
     # 台灣 04:50 夜盤結束平倉 (UTC 20:50)
     - cron: '50 20 * * *'
   workflow_dispatch:
 
 jobs:
-  trading_job:
+  trading_task:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v3
       - uses: actions/setup-python@v4
         with:
           python-version: '3.10'
-      - name: Install
-        run: pip install shioaji pandas requests supabase python-dotenv pytz matplotlib
-      - name: Execute
+      - name: Install dependencies
+        run: pip install shioaji pandas requests supabase python-dotenv pytz
+      - name: Run Script
         env:
           SHIOAJI_API_KEY: ${{ secrets.SHIOAJI_API_KEY }}
           SHIOAJI_SECRET_KEY: ${{ secrets.SHIOAJI_SECRET_KEY }}
@@ -35,6 +35,19 @@ jobs:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
         run: |
-          # 根據執行時間點自動傳入參數 (這部分需在 python 內微調判斷，或拆分多個 job)
-          # 這裡示範根據 cron 觸發點手動在 Actions 面板執行時的預設
-          python main.py entry
+          HOUR=$(TZ='Asia/Taipei' date +%H)
+          MINUTE=$(TZ='Asia/Taipei' date +%M)
+          
+          echo "Current TPE Time: $HOUR:$MINUTE"
+
+          if [ "$HOUR" -eq 10 ] && [ "$MINUTE" -le 10 ]; then
+            python main.py entry
+          elif [ "$HOUR" -eq 22 ] && [ "$MINUTE" -ge 35 ]; then
+            python main.py entry
+          elif [ "$HOUR" -eq 13 ] && [ "$MINUTE" -ge 35 ]; then
+            python main.py exit
+          elif [ "$HOUR" -eq 4 ] && [ "$MINUTE" -ge 45 ]; then
+            python main.py exit
+          else
+            python main.py monitor
+          fi
