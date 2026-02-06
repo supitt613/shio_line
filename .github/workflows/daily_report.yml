@@ -2,10 +2,10 @@ name: Strategy Report Deployment
 
 on:
   schedule:
-    - cron: '2 2 * * *'    # 台灣 10:02
-    - cron: '40 5 * * *'   # 台灣 13:40
-    - cron: '37 14 * * *'  # 台灣 22:37
-    - cron: '50 20 * * *'  # 台灣 04:50
+    - cron: '2 2 * * *'    # 10:02
+    - cron: '40 5 * * *'   # 13:40
+    - cron: '37 14 * * *'  # 22:37
+    - cron: '50 20 * * *'  # 04:50
   workflow_dispatch:
 
 jobs:
