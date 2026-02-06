@@ -185,4 +185,4 @@ if __name__ == "__main__":
     
     targets = ["MXF202603", "MXF202604"] 
     for code in targets:
-        CloudTrader(api, code).execute_logic(mode)
+        CloudTrader(api, code).execute_logic("entry")
