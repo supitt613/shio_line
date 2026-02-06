@@ -28,22 +28,16 @@ except:
     supabase = None
 
 def send_line_msg(text):
-    """發送 LINE 通知，並加入日誌輸出以便偵錯"""
-    if not LINE_ACCESS_TOKEN: 
-        print("⚠️ 未設定 LINE_ACCESS_TOKEN")
-        return
+    if not LINE_ACCESS_TOKEN: return
     url = "https://api.line.me/v2/bot/message/push"
     headers = {"Content-Type": "application/json", "Authorization": f"Bearer {LINE_ACCESS_TOKEN}"}
     payload = {"to": LINE_USER_ID, "messages": [{"type": "text", "text": text}]}
     try:
-        r = requests.post(url, headers=headers, json=payload, timeout=10)
-        if r.status_code != 200:
-            print(f"❌ LINE 發送失敗，狀態碼: {r.status_code}, 回傳內容: {r.text}")
-    except Exception as e:
-        print(f"❌ LINE 請求異常: {e}")
+        requests.post(url, headers=headers, json=payload, timeout=10)
+    except: pass
 
 # ==============================
-# 1) 核心交易類別
+# 1) 交易機器人核心類別
 # ==============================
 class CloudTrader:
     def __init__(self, api, code):
@@ -52,18 +46,14 @@ class CloudTrader:
         self.contract = getattr(self.api.Contracts.Futures.MXF, code, None)
 
     def get_config(self):
-        """自動判斷日夜盤策略參數"""
         now = datetime.now(TZ)
         h = now.hour
-        # 日盤：基準 05:00, Gap 74, 止損 89
         if (h >= 8 and h < 14):
             return "DAY", "05:00:00", 74, 89
-        # 夜盤：基準 13:45, Gap 61, 止損 68
         else:
             return "NIGHT", "13:45:00", 61, 68
 
     def fetch_base_ma(self, target_time_str):
-        """強健版：Ticks 轉 5分K 並補值計算 21MA"""
         try:
             query_date = date.today().strftime("%Y-%m-%d")
             ticks = self.api.ticks(self.contract, query_date)
@@ -83,37 +73,30 @@ class CloudTrader:
             ohlc_5m['ma21'] = ohlc_5m[price_col].rolling(window=21).mean()
 
             target_rows = ohlc_5m[ohlc_5m.index.strftime('%H:%M:%S') == target_time_str]
-            if not target_rows.empty:
-                val = target_rows['ma21'].iloc[-1]
-                return round(val, 2) if pd.notnull(val) else None
-            return None
+            return round(target_rows['ma21'].iloc[-1], 2) if not target_rows.empty else None
         except Exception as e:
             print(f"[{self.code}] 基準線計算異常: {e}")
             return None
 
     def get_active_position(self):
-        """檢查 Supabase 是否有尚未平倉的部位"""
         if not supabase: return None
         res = supabase.table("sim_orders").select("*").eq("code", self.code).eq("status", "open").execute()
         return res.data[0] if res.data else None
 
     def place_order(self, action, price, remark, is_closing=False):
-        """執行下單指令與資料庫同步 (解決兼容性問題)"""
+        """下單邏輯：加入帳號檢查以避免 'not provide account' 錯誤"""
         try:
-            # 價格型態兼容處理
-            try:
-                p_type = getattr(sj.constant.FuturesPriceType, 'MKT', 
-                                 getattr(sj.constant.FuturesPriceType, 'Market', 'MKT'))
-            except:
-                p_type = 'MKT'
+            # 確保使用當前登入的期貨帳號
+            if not self.api.fut_account:
+                raise Exception("API 尚未綁定期貨帳號")
 
-            # 開平倉屬性兼容處理
+            # 兼容性參數處理
             try:
+                p_type = getattr(sj.constant.FuturesPriceType, 'MKT', 'Market')
                 oct_val = getattr(sj.constant.FuturesOCT, 'Auto', 'Auto')
             except:
-                oct_val = 'Auto'
+                p_type = 'MKT'; oct_val = 'Auto'
 
-            # 建立委託
             order = self.api.Order(
                 action=action, price=0, quantity=1,
                 order_type=sj.constant.OrderType.ROD,
@@ -121,18 +104,17 @@ class CloudTrader:
             )
             
             self.api.place_order(self.contract, order)
-            print(f"📡 {self.code} 委託成功: {action} {p_type}")
+            print(f"📡 {self.code} 委託成功: {action}")
         except Exception as e:
-            print(f"❌ {self.code} 下單失敗: {e}")
-            send_line_msg(f"⚠️ 下單失敗: {self.code}\n錯誤: {e}")
-            return
+            print(f"❌ {self.code} 下單執行失敗: {e}")
+            send_line_msg(f"⚠️ 下單失敗: {self.code}\n原因: {e}")
+            return # 下單失敗時終止，不寫入資料庫
 
-        # 資料庫狀態同步
+        # 下單成功才執行資料庫同步
         if supabase:
             if is_closing:
                 pos = self.get_active_position()
-                if pos: 
-                    supabase.table("sim_orders").update({"status": "closed"}).eq("id", pos["id"]).execute()
+                if pos: supabase.table("sim_orders").update({"status": "closed"}).eq("id", pos["id"]).execute()
             else:
                 supabase.table("sim_orders").insert({
                     "code": self.code, "action": action, "price": price, 
@@ -148,7 +130,7 @@ class CloudTrader:
         pos = self.get_active_position()
 
         if cmd == "entry":
-            if pos: return print(f"[{self.code}] 已有持倉，跳過。")
+            if pos: return print(f"[{self.code}] 已有持倉。")
             base = self.fetch_base_ma(base_time)
             print(f"🔍 [{self.code}] 基準: {base}, 現價: {curr_p}")
             if base:
@@ -160,7 +142,7 @@ class CloudTrader:
             entry_p = float(pos["price"])
             side = pos["action"]
             loss = (entry_p - curr_p) if side == "Buy" else (curr_p - entry_p)
-            print(f"⚖️ [{self.code}] 浮動盈虧: {-loss} pt")
+            print(f"⚖️ [{self.code}] 浮動點數: {-loss}")
             if loss >= stop_loss:
                 exit_act = "Sell" if side == "Buy" else "Buy"
                 self.place_order(exit_act, curr_p, f"{session}止損", is_closing=True)
@@ -171,7 +153,7 @@ class CloudTrader:
             self.place_order(exit_act, curr_p, f"{session}收盤平倉", is_closing=True)
 
 # ==============================
-# 2) 主程式啟動器
+# 2) 主程式啟動器 (修復帳號問題)
 # ==============================
 if __name__ == "__main__":
     mode = sys.argv[1] if len(sys.argv) > 1 else "monitor"
@@ -180,9 +162,18 @@ if __name__ == "__main__":
     api = sj.Shioaji(simulation=True) 
     api.login(api_key=SHIOAJI_API_KEY, secret_key=SHIOAJI_SECRET_KEY)
     
-    # 強制發送啟動訊號 (驗證 LINE 是否正常)
-    send_line_msg(f"📢 雲端機器人啟動驗證\n執行模式: {mode}\n台灣時間: {datetime.now(TZ).strftime('%H:%M')}")
+    # === 關鍵修正：自動關聯期貨帳號 ===
+    try:
+        # 確保帳號資訊已載入
+        api.set_default_index() 
+        account_id = api.fut_account.account_id if api.fut_account else "None"
+        print(f"✅ 成功關聯帳號: {account_id}")
+    except Exception as e:
+        print(f"⚠️ 帳號關聯警告: {e}")
+
+    # 發送啟動訊號
+    send_line_msg(f"📢 雲端機器人驗證\n帳號: {api.fut_account}\n模式: {mode}")
     
     targets = ["MXF202603", "MXF202604"] 
     for code in targets:
-        CloudTrader(api, code).execute_logic("entry")
+        CloudTrader(api, code).execute_logic(mode)
