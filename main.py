@@ -123,4 +123,4 @@ if __name__ == "__main__":
     targets = ["MXF202603", "MXF202604"] # 設定合約
     for code in targets:
         trader = CloudTrader(api, code)
-        trader.execute_logic(mode)
+        trader.execute_logic("entry")
