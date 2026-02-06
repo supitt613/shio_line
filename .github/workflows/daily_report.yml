@@ -2,31 +2,25 @@ name: Futures Auto Trader Cloud
 
 on:
   schedule:
-    # 台灣 10:02 進場 (UTC 02:02)
-    - cron: '2 2 * * *'
-    # 台灣 11:00-13:30 監控止損 (每 15 分鐘一次)
-    - cron: '*/15 3-5 * * *'
-    # 台灣 13:40 日盤平倉 (UTC 05:40)
-    - cron: '40 5 * * *'
-    # 台灣 22:37 夜盤進場 (UTC 14:37)
-    - cron: '37 14 * * *'
-    # 台灣 23:00-04:30 監控止損 (每 15 分鐘一次)
-    - cron: '*/15 15-20 * * *'
-    # 台灣 04:50 夜盤結束平倉 (UTC 20:50)
-    - cron: '50 20 * * *'
+    - cron: '2 2 * * *'    # 10:02 TPE 進場
+    - cron: '*/15 3-5 * * *' # 11:00-13:30 監控
+    - cron: '40 5 * * *'   # 13:40 TPE 平倉
+    - cron: '37 14 * * *'  # 22:37 TPE 進場
+    - cron: '*/15 15-20 * * *' # 23:00-04:30 監控
+    - cron: '50 20 * * *'  # 04:50 TPE 平倉
   workflow_dispatch:
 
 jobs:
-  trading_task:
+  trading:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v3
       - uses: actions/setup-python@v4
         with:
           python-version: '3.10'
-      - name: Install dependencies
+      - name: Install
         run: pip install shioaji pandas requests supabase python-dotenv pytz
-      - name: Run Script
+      - name: Execute
         env:
           SHIOAJI_API_KEY: ${{ secrets.SHIOAJI_API_KEY }}
           SHIOAJI_SECRET_KEY: ${{ secrets.SHIOAJI_SECRET_KEY }}
@@ -35,19 +29,12 @@ jobs:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
         run: |
-          HOUR=$(TZ='Asia/Taipei' date +%H)
-          MINUTE=$(TZ='Asia/Taipei' date +%M)
-          
-          echo "Current TPE Time: $HOUR:$MINUTE"
-
-          if [ "$HOUR" -eq 10 ] && [ "$MINUTE" -le 10 ]; then
-            python main.py entry
-          elif [ "$HOUR" -eq 22 ] && [ "$MINUTE" -ge 35 ]; then
-            python main.py entry
-          elif [ "$HOUR" -eq 13 ] && [ "$MINUTE" -ge 35 ]; then
-            python main.py exit
-          elif [ "$HOUR" -eq 4 ] && [ "$MINUTE" -ge 45 ]; then
-            python main.py exit
-          else
-            python main.py monitor
+          H=$(TZ='Asia/Taipei' date +%H)
+          M=$(TZ='Asia/Taipei' date +%M)
+          if [ "$H" -eq 10 ] && [ "$M" -le 10 ]; then MODE="entry"
+          elif [ "$H" -eq 22 ] && [ "$M" -le 45 ]; then MODE="entry"
+          elif [ "$H" -eq 13 ] && [ "$M" -ge 35 ]; then MODE="exit"
+          elif [ "$H" -eq 4 ] && [ "$M" -ge 45 ]; then MODE="exit"
+          else MODE="monitor"
           fi
+          python main.py $MODE
