@@ -157,27 +157,39 @@ class FVDStepBot(threading.Thread):
 # ==============================
 stop_event = threading.Event()
 
+# ... 前面 Bot 類別定義不變 ...
+
 if __name__ == "__main__":
+    import sys
+    
     main_api = sj.Shioaji()
     main_api.login(api_key=SHIOAJI_API_KEY, secret_key=SHIOAJI_SECRET_KEY)
     
-    # 解決 MemoryError：僅載入期貨合約，不下載全市場資料
-    print("🚀 正在初始化必要合約資訊...")
-    # 若不需要選擇權，可跳過 fetch_contracts 或僅指定 SecurityType.Future
-    # main_api.fetch_contracts([sj.constant.SecurityType.Future])
-
-    targets = ["MXF202603", "MXF202604", "MXF202606"]
+    targets = ["MXF202602", "MXF202603", "MXF202604", "MXF202606"]
     
+    # 檢查是否為 GitHub Actions 的單次執行模式
+    once_mode = "--once" in sys.argv
+
+    bots = []
     for code in targets:
         bot = FVDStepBot(main_api, code)
-        bot.daemon = True
-        bot.start()
-        time.sleep(2)
+        if once_mode:
+            # 單次模式：直接執行核心邏輯不開執行緒
+            session, target_time, gap, trail = bot.get_session_config()
+            new_base = bot.fetch_base_ma(target_time)
+            if new_base:
+                send_line_msg(bot.format_strategy_report(session, new_base, gap, trail))
+                print(f"✅ {code} 報告發送成功")
+        else:
+            # 正常模式：開執行緒持續監控
+            bot.daemon = True
+            bot.start()
+            bots.append(bot)
+            time.sleep(2)
 
-    print("✅ 全月份階梯監控系統運行中。按 Ctrl+C 結束。")
-    
-    try:
-        while True: time.sleep(1)
-    except KeyboardInterrupt:
-        stop_event.set()
-        print("\n🛑 安全關閉中...")
+    if not once_mode:
+        print("🚀 持續監控模式運行中...")
+        try:
+            while True: time.sleep(1)
+        except KeyboardInterrupt:
+            stop_event.set()
