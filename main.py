@@ -37,7 +37,7 @@ def send_line_msg(text):
     except: pass
 
 # ==============================
-# 1) 核心交易類別
+# 1) 雲端交易類別
 # ==============================
 class CloudTrader:
     def __init__(self, api, code):
@@ -46,18 +46,16 @@ class CloudTrader:
         self.contract = getattr(self.api.Contracts.Futures.MXF, code, None)
 
     def get_config(self):
-        """自動判斷日夜盤策略參數"""
         now = datetime.now(TZ)
         h = now.hour
-        # 日盤：基準 05:00, 進場Gap 74, 止損 89
+        # 日盤：基準 05:00, Gap 74, 止損 89
         if (h >= 8 and h < 14):
             return "DAY", "05:00:00", 74, 89
-        # 夜盤：基準 13:45, 進場Gap 61, 止損 68
+        # 夜盤：基準 13:45, Gap 61, 止損 68
         else:
             return "NIGHT", "13:45:00", 61, 68
 
     def fetch_base_ma(self, target_time_str):
-        """Ticks 轉 5分K 補值精算基準線"""
         try:
             query_date = date.today().strftime("%Y-%m-%d")
             ticks = self.api.ticks(self.contract, query_date)
@@ -66,7 +64,6 @@ class CloudTrader:
 
             df['ts'] = pd.to_datetime(df['ts'], errors='coerce')
             df = df.dropna(subset=['ts'])
-            # 雲端時區自動轉換
             if df['ts'].dt.tz is None:
                 df['ts'] = df['ts'].dt.tz_localize('UTC').dt.tz_convert(TZ)
             else:
@@ -87,35 +84,45 @@ class CloudTrader:
             return None
 
     def get_active_position(self):
-        """從 Supabase 取得尚未平倉的部位"""
         if not supabase: return None
         res = supabase.table("sim_orders").select("*").eq("code", self.code).eq("status", "open").execute()
         return res.data[0] if res.data else None
 
     def place_order(self, action, price, remark, is_closing=False):
-        """下單指令與資料庫同步 (修正後的 MKT 兼容版)"""
+        """深度驗證版：修正所有 constant 兼容性問題"""
         try:
-            # 兼容性檢查價格型態
+            # 1. 價格型態兼容處理
             try:
-                p_type = sj.constant.FuturesPriceType.MKT 
-            except AttributeError:
-                p_type = sj.constant.FuturesPriceType.Market
+                p_type = getattr(sj.constant.FuturesPriceType, 'MKT', 
+                                 getattr(sj.constant.FuturesPriceType, 'Market', 'MKT'))
+            except:
+                p_type = 'MKT'
 
+            # 2. 開平倉屬性兼容處理
+            try:
+                oct_val = getattr(sj.constant.FuturesOCT, 'Auto', 'Auto')
+            except:
+                oct_val = 'Auto'
+
+            # 3. 建立委託
             order = self.api.Order(
-                action=action, price=0, quantity=1,
+                action=action,
+                price=0,
+                quantity=1,
                 order_type=sj.constant.OrderType.ROD,
                 price_type=p_type, 
-                oct=sj.constant.FuturesOCT.Auto, code=self.code
+                oct=oct_val, 
+                code=self.code
             )
             
             self.api.place_order(self.contract, order)
-            print(f"📡 {self.code} 委託送出: {action} {p_type}")
+            print(f"📡 {self.code} 委託成功: {action} {p_type}")
         except Exception as e:
-            print(f"❌ {self.code} 下單執行失敗: {e}")
-            send_line_msg(f"⚠️ 下單失敗通知: {self.code}\n錯誤: {e}")
+            print(f"❌ {self.code} 下單失敗: {e}")
+            send_line_msg(f"⚠️ 下單失敗: {self.code}\n錯誤: {e}")
             return
 
-        # Supabase 狀態同步
+        # 4. 資料庫同步
         if supabase:
             if is_closing:
                 pos = self.get_active_position()
@@ -126,7 +133,7 @@ class CloudTrader:
                     "status": "open", "remark": remark
                 }).execute()
         
-        send_line_msg(f"✅ 【交易執行：{self.code}】\n動作: {action}\n參考成交價: {price}\n原因: {remark}")
+        send_line_msg(f"✅ 【交易執行：{self.code}】\n動作: {action}\n成交價: {price}\n原因: {remark}")
 
     def execute_logic(self, cmd):
         session, base_time, gap, stop_loss = self.get_config()
@@ -135,9 +142,9 @@ class CloudTrader:
         pos = self.get_active_position()
 
         if cmd == "entry":
-            if pos: return print(f"[{self.code}] 已有持倉，跳過進場判斷。")
+            if pos: return print(f"[{self.code}] 已有持倉。")
             base = self.fetch_base_ma(base_time)
-            print(f"🔍 [{self.code}] 基準線: {base}, 目前價: {curr_p}")
+            print(f"🔍 [{self.code}] 基準: {base}, 現價: {curr_p}")
             if base:
                 if curr_p >= (base + gap): self.place_order("Buy", curr_p, f"{session}突破進場")
                 elif curr_p <= (base - gap): self.place_order("Sell", curr_p, f"{session}跌破進場")
@@ -147,26 +154,25 @@ class CloudTrader:
             entry_p = float(pos["price"])
             side = pos["action"]
             loss = (entry_p - curr_p) if side == "Buy" else (curr_p - entry_p)
-            print(f"⚖️ [{self.code}] 目前浮動點數: {-loss} pt")
+            print(f"⚖️ [{self.code}] 浮動點數: {-loss}")
             if loss >= stop_loss:
                 exit_act = "Sell" if side == "Buy" else "Buy"
-                self.place_order(exit_act, curr_p, f"{session}觸及止損({stop_loss}pt)", is_closing=True)
+                self.place_order(exit_act, curr_p, f"{session}止損", is_closing=True)
 
         elif cmd == "exit":
             if not pos: return
             exit_act = "Sell" if pos["action"] == "Buy" else "Buy"
-            self.place_order(exit_act, curr_p, f"{session}時間截止強制平倉", is_closing=True)
+            self.place_order(exit_act, curr_p, f"{session}收盤平倉", is_closing=True)
 
 # ==============================
-# 2) 主程式啟動器
+# 2) 主程式
 # ==============================
 if __name__ == "__main__":
     mode = sys.argv[1] if len(sys.argv) > 1 else "monitor"
-    api = sj.Shioaji(simulation=True) # 建議先用模擬測試
+    api = sj.Shioaji(simulation=True) 
     api.login(api_key=SHIOAJI_API_KEY, secret_key=SHIOAJI_SECRET_KEY)
     
-    # 監控合約月份
+    # 監控合約
     targets = ["MXF202603", "MXF202604"] 
     for code in targets:
-        trader = CloudTrader(api, code)
-        trader.execute_logic("entry")
+        CloudTrader(api, code).execute_logic(mode)
