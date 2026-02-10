@@ -1,27 +1,29 @@
-name: Strategy Report Deployment
+name: ProTrader Daily Run
 
 on:
   schedule:
-    - cron: '2 2 * * *'    # 10:02
-    - cron: '40 5 * * *'   # 13:40
-    - cron: '37 14 * * *'  # 22:37
-    - cron: '50 20 * * *'  # 04:50
+    # 台灣早盤時間 (08:45 -> UTC 00:45)
+    - cron: '45 0 * * 1-5'
+    # 台灣夜盤時間 (15:00 -> UTC 07:00)
+    - cron: '0 7 * * 1-5'
   workflow_dispatch:
 
 jobs:
-  report_job:
+  run-strategy:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v3
-      - uses: actions/setup-python@v4
+      - name: Set up Python
+        uses: actions/setup-python@v4
         with:
           python-version: '3.10'
-      - name: Install
-        run: pip install shioaji pandas requests python-dotenv pytz
-      - name: Run
+      - name: Install dependencies
+        run: |
+          pip install pandas shioaji requests python-dotenv pytz
+      - name: Run Trader
         env:
           SHIOAJI_API_KEY: ${{ secrets.SHIOAJI_API_KEY }}
           SHIOAJI_SECRET_KEY: ${{ secrets.SHIOAJI_SECRET_KEY }}
           LINE_ACCESS_TOKEN: ${{ secrets.LINE_ACCESS_TOKEN }}
           LINE_USER_ID: ${{ secrets.LINE_USER_ID }}
-        run: python main.py
+        run: python your_script_name.py
