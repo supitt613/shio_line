@@ -34,17 +34,17 @@ class ProTrader:
             return {
                 "session": "早盤",
                 "base_time": "05:00:00", # 取前一盤結尾 MA
-                "gap": 110,
-                "step": 89,
+                "gap": 74,
+                "step": 110,
                 "sl_dist": 89
             }
         else:
             return {
                 "session": "NIGHT",
                 "base_time": "13:45:00", # 取日盤結尾 MA
-                "gap": 68,
+                "gap": 61,
                 "step": 68,
-                "sl_dist": 89
+                "sl_dist": 50
             }
 
     def fetch_base_ma(self, target_time_str):
